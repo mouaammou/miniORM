@@ -1,32 +1,42 @@
-# main.py
 from app.db import Database
+from app.exceptions import ORMDatabaseError
+
+def test_database_roundtrip():
+    db = Database()
+
+    try:
+        print("Connecting...")
+        db.connect()
+
+        print("Resetting table...")
+        db.execute("DROP TABLE IF EXISTS test_people")
+        db.execute("""
+            CREATE TABLE test_people (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL
+            )
+        """)
+
+        print("Inserting row...")
+        row = db.execute(
+            "INSERT INTO test_people (name) VALUES (%s) RETURNING id, name",
+            ("Mouad",),
+            fetch_one=True
+        )
+        print("Inserted:", row)
+
+        print("Reading rows...")
+        rows = db.fetchall("SELECT id, name FROM test_people ORDER BY id")
+        print("Rows:", rows)
+
+        db.commit()
+
+    except ORMDatabaseError as exc:
+        print("DB error:", exc)
+        db.rollback()
+
+    finally:
+        db.close()
 
 if __name__ == "__main__":
-    db = Database()
-    
-    print("Testing connection...")
-    db.connect()
-    print("Connected successfully!")
-    
-    # 1. Create a dummy table
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS test_users (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(100) NOT NULL
-        );
-    """)
-    db.commit()
-    
-    # 2. Insert a record
-    db.execute("INSERT INTO test_users (name) VALUES (%s);", ("Alice",))
-    db.commit()
-    
-    # 3. Fetch the record back
-    user = db.fetchone("SELECT * FROM test_users WHERE name = %s;", ("Alice",))
-    print(f"Fetched User from Postgres: {user}")
-    
-    # Clean up and close
-    db.execute("DROP TABLE test_users;")
-    db.commit()
-    db.close()
-    print("Connection closed cleanly.")
+    test_database_roundtrip()

@@ -1,7 +1,8 @@
 import psycopg2
-from psycopg2 import OperationalError, DatabaseError
+from psycopg2 import OperationalError, DatabaseError as PsycopgDatabaseError
 from psycopg2.extras import RealDictCursor
 
+from app.exceptions import ORMDatabaseError
 
 class Database:
     def __init__(self, dsn: str = "dbname=miniorm_db user=postgres password=mysecretpassword host=localhost port=5432"):
@@ -13,9 +14,8 @@ class Database:
             try:
                 self._connection = psycopg2.connect(self.dsn)
                 self._connection.autocommit = False
-            except OperationalError as e:
-                raise ConnectionError(f"Database connection failed: {e}")
-
+            except (OperationalError, PsycopgDatabaseError) as e:
+                raise ORMDatabaseError(f"Database connection failed: {e}")
     def close(self):
         if self._connection and not self._connection.closed:
             self._connection.close()
@@ -23,27 +23,35 @@ class Database:
 
     def commit(self):
         if self._connection:
-            self._connection.commit()
+            try:
+                self._connection.commit()
+            except PsycopgDatabaseError as e:
+                self.rollback()
+                raise ORMDatabaseError(f"Commit failed: {e}")
 
     def rollback(self):
         if self._connection:
-            self._connection.rollback()
+            try:
+                self._connection.rollback()
+            except PsycopgDatabaseError as e:
+                raise ORMDatabaseError(f"Rollback failed: {e}")
 
-    def execute(self, sql: str, params=None, fetch_result: bool = False):
+    def execute(self, sql: str, params=None, fetch_one: bool = False):
         """
         Execute a SQL statement.
-        If fetch_result=True, return one row (useful for INSERT ... RETURNING).
+        If fetch_one=True, return one row (useful for INSERT ... RETURNING).
         """
         self.connect()
         try:
-            cursor_factory = RealDictCursor if fetch_result else None
+            cursor_factory = RealDictCursor if fetch_one else None
             with self._connection.cursor(cursor_factory=cursor_factory) as cursor:
                 cursor.execute(sql, params)
-                if fetch_result:
+                if fetch_one:
                     return cursor.fetchone()
-        except DatabaseError as e:
+        except PsycopgDatabaseError as e:
             self.rollback()
-            raise e
+            # Intercept raw psycopg2 error and re-raise our unified custom error label
+            raise ORMDatabaseError(f"Execution failed: {e}") from e
 
     def fetchone(self, sql: str, params=None):
         self.connect()
@@ -51,9 +59,9 @@ class Database:
             with self._connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(sql, params)
                 return cursor.fetchone()
-        except DatabaseError as e:
+        except PsycopgDatabaseError as e:
             self.rollback()
-            raise e
+            raise ORMDatabaseError(f"Fetchone failed: {e}") from e
 
     def fetchall(self, sql: str, params=None):
         self.connect()
@@ -61,6 +69,6 @@ class Database:
             with self._connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(sql, params)
                 return cursor.fetchall()
-        except DatabaseError as e:
+        except PsycopgDatabaseError as e:
             self.rollback()
-            raise e
+            raise ORMDatabaseError(f"Fetchall failed: {e}") from e
